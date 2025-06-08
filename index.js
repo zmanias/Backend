@@ -1,19 +1,23 @@
-// Express Web Server for Creating Pterodactyl Panel User and Server
-const express = require("express");
-const fetch = require("node-fetch");
-const crypto = require("crypto");
-const fs = require("fs");
-const app = express();
+const express = require('express');
+const cors = require('cors');
+const fetch = require('node-fetch');
+const crypto = require('crypto');
 
+const app = express();
+app.use(cors());
 app.use(express.json());
 
-const egg = "15";
-const nestid = "5";
-const loc = "1";
-const domain = "https://tigerhosting.blackhunter.my.id";
-const apikey = "ptla_8mD3ktx8hiGYao6gf50evx55qufE9gQGMm0D6hOzq1D";
+// ✅ APIKEY & DOMAIN baru
+const APIKEY = "ptla_8mD3ktx8hiGYao6gf50evx55qufE9gQGMm0D6hOzq1D";
+const DOMAIN = "https://tigerhosting.blackhunter.my.id";
 
-const ramDiskCpuMap = {
+// ✅ Konfigurasi default
+const EGG = "15";
+const NESTID = "5";
+const LOC = "1";
+
+// ✅ Daftar paket server
+const plans = {
   "1gb": { ram: "1000", disk: "1000", cpu: "40" },
   "2gb": { ram: "2000", disk: "1000", cpu: "60" },
   "3gb": { ram: "3000", disk: "2000", cpu: "80" },
@@ -28,60 +32,54 @@ const ramDiskCpuMap = {
   "unli": { ram: "0", disk: "0", cpu: "0" }
 };
 
-app.post("/create-server", async (req, res) => {
+// ✅ Endpoint utama untuk membuat server
+app.post('/create-server', async (req, res) => {
   const { command, username } = req.body;
-  if (!ramDiskCpuMap[command]) return res.status(400).json({ error: "Invalid plan." });
-  if (!username) return res.status(400).json({ error: "Username is required." });
+  const plan = plans[command];
 
-  const { ram, disk, cpu } = ramDiskCpuMap[command];
-  const email = `${username.toLowerCase()}@gmail.com`;
-  const name = `${username.charAt(0).toUpperCase() + username.slice(1)} Server`;
-  const password = username + crypto.randomBytes(2).toString("hex");
+  if (!plan) return res.status(400).json({ error: "Invalid plan" });
+
+  const email = `${username}@gmail.com`;
+  const password = username + crypto.randomBytes(2).toString('hex');
+  const name = username.charAt(0).toUpperCase() + username.slice(1) + " Server";
 
   try {
-    const userRes = await fetch(`${domain}/api/application/users`, {
+    // ➤ Buat user
+    const userRes = await fetch(`${DOMAIN}/api/application/users`, {
       method: "POST",
       headers: {
-        Accept: "application/json",
         "Content-Type": "application/json",
-        Authorization: `Bearer ${apikey}`
+        "Authorization": `Bearer ${APIKEY}`
       },
       body: JSON.stringify({
-        email,
-        username: username.toLowerCase(),
-        first_name: name,
-        last_name: "Server",
-        language: "en",
-        password
+        email, username, first_name: name, last_name: "Server",
+        language: "en", password
       })
     });
 
     const userData = await userRes.json();
     if (userData.errors) return res.status(400).json(userData.errors[0]);
+
     const userId = userData.attributes.id;
 
-    const eggData = await (await fetch(`${domain}/api/application/nests/${nestid}/eggs/${egg}`, {
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apikey}`
-      }
-    })).json();
-
+    // ➤ Ambil startup egg
+    const eggRes = await fetch(`${DOMAIN}/api/application/nests/${NESTID}/eggs/${EGG}`, {
+      headers: { "Authorization": `Bearer ${APIKEY}` }
+    });
+    const eggData = await eggRes.json();
     const startup = eggData.attributes.startup;
 
-    const serverRes = await fetch(`${domain}/api/application/servers`, {
+    // ➤ Buat server
+    const serverRes = await fetch(`${DOMAIN}/api/application/servers`, {
       method: "POST",
       headers: {
-        Accept: "application/json",
         "Content-Type": "application/json",
-        Authorization: `Bearer ${apikey}`
+        "Authorization": `Bearer ${APIKEY}`
       },
       body: JSON.stringify({
         name,
-        description: new Date().toISOString(),
         user: userId,
-        egg: parseInt(egg),
+        egg: parseInt(EGG),
         docker_image: "ghcr.io/parkervcp/yolks:nodejs_18",
         startup,
         environment: {
@@ -91,45 +89,38 @@ app.post("/create-server", async (req, res) => {
           CMD_RUN: "npm start"
         },
         limits: {
-          memory: ram,
+          memory: plan.ram,
           swap: 0,
-          disk,
+          disk: plan.disk,
           io: 500,
-          cpu
+          cpu: plan.cpu
         },
-        feature_limits: {
-          databases: 5,
-          backups: 5,
-          allocations: 5
-        },
-        deploy: {
-          locations: [parseInt(loc)],
-          dedicated_ip: false,
-          port_range: []
-        }
+        feature_limits: { databases: 5, backups: 5, allocations: 5 },
+        deploy: { locations: [parseInt(LOC)], dedicated_ip: false, port_range: [] }
       })
     });
 
     const serverData = await serverRes.json();
     if (serverData.errors) return res.status(400).json(serverData.errors[0]);
 
-    const server = serverData.attributes;
-
+    // ✅ Response sukses
     res.json({
-      message: "Server created successfully.",
-      server_id: server.id,
-      username: userData.attributes.username,
+      message: "Server created successfully",
+      username,
       password,
+      server_id: serverData.attributes.id,
       specs: {
-        ram: ram === "0" ? "Unlimited" : `${parseInt(ram) / 1000}GB`,
-        disk: disk === "0" ? "Unlimited" : `${parseInt(disk) / 1000}GB`,
-        cpu: cpu === "0" ? "Unlimited" : `${cpu}%`
+        ram: plan.ram === "0" ? "Unlimited" : plan.ram + "MB",
+        disk: plan.disk === "0" ? "Unlimited" : plan.disk + "MB",
+        cpu: plan.cpu === "0" ? "Unlimited" : plan.cpu + "%"
       },
-      panel_url: domain
+      panel_url: DOMAIN
     });
+
   } catch (err) {
-    res.status(500).json({ error: "Server error", details: err.message });
+    res.status(500).json({ error: err.message });
   }
 });
 
-app.listen(3000, () => console.log("Server running on port 3000"));
+// ✅ Jalankan server di port 3000
+app.listen(3000, () => console.log("✅ Server running on port 3000"));
